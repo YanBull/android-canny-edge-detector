@@ -75,3 +75,8 @@ dependencies {
     implementation ("com.quickbirdstudios:opencv:${opencv_version}")
 
 }
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(17)
+    }
+}

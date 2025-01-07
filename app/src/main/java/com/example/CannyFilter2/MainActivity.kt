@@ -1,24 +1,26 @@
 package com.example.CannyFilter2
 
 import android.Manifest
-import android.content.ContentValues
+import android.content.ContentValues.TAG
 import android.content.pm.PackageManager
+import android.graphics.*
 import android.os.Build
 import android.os.Bundle
-import android.provider.MediaStore
 import android.util.Log
+import android.util.Size
+import android.widget.ImageView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.video.Recorder
-import androidx.camera.video.Recording
-import androidx.camera.video.VideoCapture
 import androidx.core.content.ContextCompat
 import com.example.CannyFilter2.databinding.ActivityMainBinding
-import java.text.SimpleDateFormat
-import java.util.*
+import org.opencv.android.OpenCVLoader
+import org.opencv.android.Utils
+import org.opencv.core.Mat
+import org.opencv.imgproc.Imgproc
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
@@ -26,17 +28,21 @@ import java.util.concurrent.Executors
 class MainActivity : AppCompatActivity() {
     private lateinit var viewBinding: ActivityMainBinding
 
-    private var imageCapture: ImageCapture? = null
-
-    private var videoCapture: VideoCapture<Recorder>? = null
-    private var recording: Recording? = null
-
     private lateinit var cameraExecutor: ExecutorService
 
+    private lateinit var imageView: ImageView
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        if (!OpenCVLoader.initDebug())
+            Log.d("ERROR", "Unable to load OpenCV");
+        else
+            Log.d("SUCCESS", "OpenCV loaded")
+
         super.onCreate(savedInstanceState)
         viewBinding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(viewBinding.root)
+
+        imageView = findViewById(R.id.imageView)
 
         // Request camera permissions
         if (allPermissionsGranted()) {
@@ -46,8 +52,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         // Set up the listeners for take photo and video capture buttons
-        viewBinding.imageCaptureButton.setOnClickListener { takePhoto() }
-        viewBinding.videoCaptureButton.setOnClickListener { captureVideo() }
 
         cameraExecutor = Executors.newSingleThreadExecutor()
     }
@@ -71,50 +75,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-    private fun takePhoto() {
-        // Get a stable reference of the modifiable image capture use case
-        val imageCapture = imageCapture ?: return
-
-        // Create time stamped name and MediaStore entry.
-        val name = SimpleDateFormat(FILENAME_FORMAT, Locale.US)
-            .format(System.currentTimeMillis())
-        val contentValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, name)
-            put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-            if(Build.VERSION.SDK_INT > Build.VERSION_CODES.P) {
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/CameraX-Image")
-            }
-        }
-
-        // Create output options object which contains file + metadata
-        val outputOptions = ImageCapture.OutputFileOptions
-            .Builder(contentResolver,
-                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
-                contentValues)
-            .build()
-
-        // Set up image capture listener, which is triggered after photo has
-        // been taken
-        imageCapture.takePicture(
-            outputOptions,
-            ContextCompat.getMainExecutor(this),
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onError(exc: ImageCaptureException) {
-                    Log.e(TAG, "Photo capture failed: ${exc.message}", exc)
-                }
-
-                override fun
-                        onImageSaved(output: ImageCapture.OutputFileResults){
-                    val msg = "Photo capture succeeded: ${output.savedUri}"
-                    Toast.makeText(baseContext, msg, Toast.LENGTH_SHORT).show()
-                    Log.d(TAG, msg)
-                }
-            }
-        )
-    }
-
-    private fun captureVideo() {}
-
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
 
@@ -123,25 +83,23 @@ class MainActivity : AppCompatActivity() {
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
 
             // Preview
-            val preview = Preview.Builder()
-                .build()
-                .also {
-                    it.setSurfaceProvider(viewBinding.viewFinder.surfaceProvider)
-                }
-
-            imageCapture = ImageCapture.Builder()
-                .build()
-
-            val imageAnalyzer = ImageAnalysis.Builder()
-                .build()
-                .also {
-                    it.setAnalyzer(cameraExecutor, CannyAnalyzer { edges ->
-                        Log.d(TAG, "Number of edges: $edges")
-                    })
-                }
+//            val preview = Preview.Builder()
+//                .build()
+//                .also {
+//                    it.setSurfaceProvider(viewBinding.viewFinder.surfaceProvider)
+//                }
 
             // Select back camera as a default
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+
+            val imageAnalysis = ImageAnalysis.Builder()
+                .setTargetResolution(Size(1280, 720))
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build()
+
+            imageAnalysis.setAnalyzer(Executors.newSingleThreadExecutor(), ImageAnalysis.Analyzer { imageProxy ->
+                processImage(imageProxy)
+            })
 
             try {
                 // Unbind use cases before rebinding
@@ -149,13 +107,67 @@ class MainActivity : AppCompatActivity() {
 
                 // Bind use cases to camera
                 cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview, imageCapture, imageAnalyzer)
+                    this, cameraSelector,
+//                    preview,
+                    imageAnalysis)
 
             } catch(exc: Exception) {
                 Log.e(TAG, "Use case binding failed", exc)
             }
 
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    private fun processImage(imageProxy: ImageProxy) {
+        val bitmap = imageProxy.toBitmap()
+        val edgeBitmap = bitmap?.let { applyCannyEdgeDetection(it) }
+        runOnUiThread {
+            imageView.setImageBitmap(edgeBitmap)
+        }
+        imageProxy.close()
+    }
+
+    private fun ImageProxy.toBitmap(): Bitmap? {
+        val yBuffer = planes[0].buffer // Y
+        val uBuffer = planes[1].buffer // U
+        val vBuffer = planes[2].buffer // V
+
+        val ySize = yBuffer.remaining()
+        val uSize = uBuffer.remaining()
+        val vSize = vBuffer.remaining()
+
+        val nv21 = ByteArray(ySize + uSize + vSize)
+
+        // U and V are swapped
+        yBuffer.get(nv21, 0, ySize)
+        vBuffer.get(nv21, ySize, vSize)
+        uBuffer.get(nv21, ySize + vSize, uSize)
+
+        val yuvImage = YuvImage(nv21, ImageFormat.NV21, width, height, null)
+        val out = ByteArrayOutputStream()
+        yuvImage.compressToJpeg(Rect(0, 0, width, height), 100, out)
+        val byteArray = out.toByteArray()
+        return BitmapFactory.decodeByteArray(byteArray, 0, byteArray.size)
+    }
+
+    private fun applyCannyEdgeDetection(bitmap: Bitmap): Bitmap {
+        val src = Mat()
+        Utils.bitmapToMat(bitmap, src)
+
+        val gray = Mat()
+        Imgproc.cvtColor(src, gray, Imgproc.COLOR_BGR2GRAY)
+
+        val edges = Mat()
+        Imgproc.Canny(gray, edges, 100.0, 200.0)
+
+        val edgeBitmap = Bitmap.createBitmap(edges.cols(), edges.rows(), Bitmap.Config.ARGB_8888)
+        Utils.matToBitmap(edges, edgeBitmap)
+
+        src.release()
+        gray.release()
+        edges.release()
+
+        return edgeBitmap
     }
 
     private fun requestPermissions() {
@@ -174,8 +186,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        private const val TAG = "CameraXApp"
-        private const val FILENAME_FORMAT = "yyyy-MM-dd-HH-mm-ss-SSS"
         private val REQUIRED_PERMISSIONS =
             mutableListOf (
                 Manifest.permission.CAMERA,
