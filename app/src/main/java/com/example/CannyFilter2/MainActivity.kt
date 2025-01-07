@@ -33,6 +33,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var imageView: ImageView
 
     override fun onCreate(savedInstanceState: Bundle?) {
+
+        supportActionBar?.hide()
+
         if (!OpenCVLoader.initDebug())
             Log.d("ERROR", "Unable to load OpenCV");
         else
@@ -50,10 +53,6 @@ class MainActivity : AppCompatActivity() {
         } else {
             requestPermissions()
         }
-
-        // Set up the listeners for take photo and video capture buttons
-
-        cameraExecutor = Executors.newSingleThreadExecutor()
     }
 
     private val activityResultLauncher =
@@ -103,7 +102,6 @@ class MainActivity : AppCompatActivity() {
                 // Bind use cases to camera
                 cameraProvider.bindToLifecycle(
                     this, cameraSelector,
-//                    preview,
                     imageAnalysis)
 
             } catch(exc: Exception) {
@@ -202,7 +200,6 @@ class MainActivity : AppCompatActivity() {
         private val REQUIRED_PERMISSIONS =
             mutableListOf (
                 Manifest.permission.CAMERA,
-                Manifest.permission.RECORD_AUDIO
             ).apply {
                 if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
                     add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
