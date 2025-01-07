@@ -82,18 +82,13 @@ class MainActivity : AppCompatActivity() {
             // Used to bind the lifecycle of cameras to the lifecycle owner
             val cameraProvider: ProcessCameraProvider = cameraProviderFuture.get()
 
-            // Preview
-//            val preview = Preview.Builder()
-//                .build()
-//                .also {
-//                    it.setSurfaceProvider(viewBinding.viewFinder.surfaceProvider)
-//                }
-
             // Select back camera as a default
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
+
+
             val imageAnalysis = ImageAnalysis.Builder()
-                .setTargetResolution(Size(1280, 720))
+                .setTargetResolution(Size(1920, 1080))
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
 
@@ -118,13 +113,26 @@ class MainActivity : AppCompatActivity() {
         }, ContextCompat.getMainExecutor(this))
     }
 
+
     private fun processImage(imageProxy: ImageProxy) {
-        val bitmap = imageProxy.toBitmap()
-        val edgeBitmap = bitmap?.let { applyCannyEdgeDetection(it) }
+        val rotationDegrees = imageProxy.imageInfo.rotationDegrees
+        val bitmap = imageProxy.toBitmap() ?: return
+        val rotatedBitmap = rotateBitmap(bitmap, rotationDegrees)
+
+        val edgeBitmap = applyCannyEdgeDetection(rotatedBitmap)
+
         runOnUiThread {
             imageView.setImageBitmap(edgeBitmap)
         }
+
         imageProxy.close()
+    }
+
+    private fun rotateBitmap(bitmap: Bitmap, rotationDegrees: Int): Bitmap {
+        val matrix = Matrix().apply {
+            postRotate(rotationDegrees.toFloat())
+        }
+        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
     private fun ImageProxy.toBitmap(): Bitmap? {
@@ -160,12 +168,17 @@ class MainActivity : AppCompatActivity() {
         val edges = Mat()
         Imgproc.Canny(gray, edges, 100.0, 200.0)
 
-        val edgeBitmap = Bitmap.createBitmap(edges.cols(), edges.rows(), Bitmap.Config.ARGB_8888)
-        Utils.matToBitmap(edges, edgeBitmap)
+        // Apply thresholding to filter out noise and retain consistent lines
+        val thresholded = Mat()
+        Imgproc.threshold(edges, thresholded, 128.0, 255.0, Imgproc.THRESH_BINARY)
+
+        val edgeBitmap = Bitmap.createBitmap(thresholded.cols(), thresholded.rows(), Bitmap.Config.ARGB_8888)
+        Utils.matToBitmap(thresholded, edgeBitmap)
 
         src.release()
         gray.release()
         edges.release()
+        thresholded.release()
 
         return edgeBitmap
     }
