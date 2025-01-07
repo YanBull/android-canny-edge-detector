@@ -21,4 +21,3 @@ dependencyResolutionManagement {
 
 rootProject.name = "Canny Filter 2"
 include(":app")
-include(":opencv")

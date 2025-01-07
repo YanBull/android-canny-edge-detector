@@ -1,8 +1,10 @@
-package com.example.CannyFilter2.ui.theme
+package com.example.CannyFilter2
 
 import android.graphics.*
+import android.util.Log
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
+import org.opencv.android.OpenCVLoader
 import org.opencv.android.Utils
 import org.opencv.core.Core
 import org.opencv.core.CvType
@@ -11,10 +13,17 @@ import org.opencv.imgproc.Imgproc
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 
-typealias EdgesListener = (edges: Int) -> Unit
 
+typealias EdgesListener = (luma: Int) -> Unit
 
 class CannyAnalyzer(private val listener: EdgesListener) : ImageAnalysis.Analyzer {
+
+    init {
+        if (!OpenCVLoader.initDebug())
+            Log.d("ERROR", "Unable to load OpenCV");
+        else
+            Log.d("SUCCESS", "OpenCV loaded")
+    }
 
     private fun ByteBuffer.toByteArray(): ByteArray {
         rewind()    // Rewind the buffer to zero
@@ -56,8 +65,8 @@ class CannyAnalyzer(private val listener: EdgesListener) : ImageAnalysis.Analyze
         listener(edgeCount)
 
         // Optional: Convert Mat to Bitmap to display
-//        val cannyBitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888)
-//        Utils.matToBitmap(mat, cannyBitmap)
+        val cannyBitmap = Bitmap.createBitmap(mat.cols(), mat.rows(), Bitmap.Config.ARGB_8888)
+        Utils.matToBitmap(mat, cannyBitmap)
 
         // Close the image proxy to prevent memory leaks
         image.close()

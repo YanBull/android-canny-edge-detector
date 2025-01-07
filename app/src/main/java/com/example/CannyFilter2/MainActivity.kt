@@ -17,7 +17,6 @@ import androidx.camera.video.Recording
 import androidx.camera.video.VideoCapture
 import androidx.core.content.ContextCompat
 import com.example.CannyFilter2.databinding.ActivityMainBinding
-import com.example.CannyFilter2.ui.theme.CannyAnalyzer
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ExecutorService
